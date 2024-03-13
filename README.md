@@ -33,9 +33,51 @@ Run the `install/setup.sh` script to setup the environment:
 ./setup.sh
 ```
 
-## Call HTTPBin
+Note that in this environment we've configured the validation webhook to:
+- Reject invalid resources (resources that would result in an error state)
+- Reject resources that would result in a warning
 
+This is a key configuration setting for this reproducer!!!
 
+## Reproducer
+
+The Gloo Edge discovery service automatically creates an `Upstream` resource for the deploted `httpbin` K8S service:
+
+```
+kubectl -n gloo-system get upstream
+```
+
+You will see the `httpbin-httpbin-8000` `Upstream` in that list.
+
+Delete the `httpbin` K8S service:
+
+```
+kubectl -n httpbin delete svc httpbin
+```
+
+Note that the `Upstream` is still there:
+
+```
+kubectl -n gloo-system get upstream
+```
+
+The reason for this is that we still have a `VirtualService` that references the `httpbin-httpbin-8000` `Upstream`, and deleting that `Upstream` would result in a "Warning" on the given `VirtualService`. Hence, when the Discovery service tries to delete the `Upstream`, that delete is rejected by the validation webhook, as it would result in the `VirtualService` going into a "Warning" state.
+
+You can check the logs of the Discovery and Gloo pods to see the log messages that show the rejection of the Upstream deletion:
+
+```
+kubectl -n gloo-system logs -f discovery-{id}
+```
+
+```
+kubectl -n gloo-system logs -f gloo-{id}
+```
+
+When you now delete the `VirtualService` that is referencing the `httpbin-httpbin-8000` `Upstream`, the `Upstream` will eventually be removed (after the discovery cycle runs):
+
+```
+kubectl -n gloo-system delete vs vs
+```
 
 ## Conclusion
-TODO
+By configuring the validation webhook to reject updates that would result in Gloo resources going into a "Warning" state (i.e. `gloo.gateway.validation.alwaysAcceptResources: false` and `gloo.gateway.validation.allowWarnings: false`), the automatic deletion of the `Upstream` by the discovery service is rejected, as there is still a `VirtualService` referencing the `Upstream`. After deleting the given `VirtualService`, the `Upstream` will be automatically deleted on the next discovery run.
